@@ -1,0 +1,72 @@
+name: Build FFPatchLoader
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ldid
+        run: brew install ldid
+
+      - name: Build FFPatchLoader.dylib (arm64, iOS 14+, pure C)
+        run: |
+          set -e
+          xcrun -sdk iphoneos clang \
+            -arch arm64 \
+            -miphoneos-version-min=14.0 \
+            -dynamiclib -O2 -Wall \
+            -Wno-deprecated-declarations \
+            -Wno-unused-command-line-argument \
+            -Wl,-install_name,@executable_path/Frameworks/FFPatchLoader.dylib \
+            src/ffpatch.c src/gotbind.c \
+            -o FFPatchLoader.dylib 2>&1 | tee build_output.txt
+
+          echo "=== sign (ad-hoc fakesign; TrollStore re-signs on install) ==="
+          ldid -S FFPatchLoader.dylib
+
+          echo "=== dylib info ==="
+          file FFPatchLoader.dylib
+          otool -D FFPatchLoader.dylib
+
+          echo "=== exports ==="
+          nm -gU FFPatchLoader.dylib
+
+          echo "=== __interpose section (MUST exist) ==="
+          if ! otool -V -s __DATA __interpose FFPatchLoader.dylib | grep -q interpose; then
+            echo "FATAL: __DATA,__interpose section missing"; exit 1
+          fi
+          otool -V -s __DATA __interpose FFPatchLoader.dylib
+
+          ls -la FFPatchLoader.dylib
+
+      - name: Upload build log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build_output.txt
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFPatchLoader
+          path: FFPatchLoader.dylib
+
+      - name: Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.run_number }}
+          files: FFPatchLoader.dylib
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,4 @@
+build_output.txt
+*.dylib
+.DS_Store
+*.log
