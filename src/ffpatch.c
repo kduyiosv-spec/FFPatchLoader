@@ -182,7 +182,8 @@ static void ensure_init_once(void) {
     if ((void *)o_open == (void *)ffp_open ||
         (void *)o_fopen == (void *)ffp_fopen) {
         syslog(LOG_ERR, "[ffpatch] FATAL: dlsym(RTLD_NEXT) resolved to our own interposer — interposition disabled");
-        o_open = o_openat = NULL;
+        o_open = NULL;
+        o_openat = NULL;
         o_fopen = NULL;
         return;
     }

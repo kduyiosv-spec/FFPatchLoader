@@ -23,6 +23,17 @@
 #include <mach-o/dyld.h>
 #include <sys/syslog.h>
 
+// ---- SDK compatibility shims ----------------------------------------------
+// Apple's mach-o headers define these as plain `struct`s (no typedefs) and
+// some section-type constants are missing from newer SDKs — declare manually.
+#ifndef S_NON_LAZY_POINTER
+#define S_NON_LAZY_POINTER 0x6
+#endif
+#ifndef S_LAZY_SYMBOL_POINTERS
+#define S_LAZY_SYMBOL_POINTERS 0x7
+#endif
+extern struct mach_header_64 _mh_dylib_header; // linker-defined, our own image
+
 // rebind table: symbol name, our replacement, resolved real address
 typedef struct rebind_sym {
     const char *name;
@@ -81,7 +92,7 @@ static bool page_set_protection(void *addr, bool writable) {
 
 // ---- section scanning ----
 
-static bool is_pointer_section(const section_64 *sect) {
+static bool is_pointer_section(const struct section_64 *sect) {
     // __got (chained-fixup GOT) / __nl_symbol_ptr / __la_symbol_ptr
     if (strcmp(sect->sectname, "__got") == 0 ||
         strcmp(sect->sectname, "__nl_symbol_ptr") == 0 ||
@@ -92,7 +103,7 @@ static bool is_pointer_section(const section_64 *sect) {
     return (type == S_NON_LAZY_POINTER || type == S_LAZY_SYMBOL_POINTERS);
 }
 
-static void scan_section(const section_64 *sect, intptr_t slide,
+static void scan_section(const struct section_64 *sect, intptr_t slide,
                          const char *image_name, bool needs_flip,
                          long *out_flips_failed) {
     if (sect->size == 0 || (sect->size % 8) != 0) return;
@@ -144,16 +155,16 @@ static void rebind_image(const struct mach_header_64 *mh, intptr_t slide,
         if (lc->cmdsize < sizeof(struct load_command) || (lc->cmdsize % 8) != 0) break;
         if (p + lc->cmdsize > end) break;
 
-        if (lc->cmd == LC_SEGMENT_64 && lc->cmdsize >= sizeof(segment_command_64)) {
-            const segment_command_64 *seg = (const segment_command_64 *)p;
+        if (lc->cmd == LC_SEGMENT_64 && lc->cmdsize >= sizeof(struct segment_command_64)) {
+            const struct segment_command_64 *seg = (const struct segment_command_64 *)p;
             bool is_data_const = (strncmp(seg->segname, "__DATA_CONST", 16) == 0);
             bool is_data       = (strncmp(seg->segname, "__DATA", 16) == 0);
 
             if (is_data_const || is_data) {
-                const section_64 *sect =
-                    (const section_64 *)(p + sizeof(segment_command_64));
+                const struct section_64 *sect =
+                    (const struct section_64 *)(p + sizeof(struct segment_command_64));
                 uint32_t nsects = seg->nsects;
-                if ((sizeof(segment_command_64) + (size_t)nsects * sizeof(section_64)) <= lc->cmdsize) {
+                if ((sizeof(struct segment_command_64) + (size_t)nsects * sizeof(struct section_64)) <= lc->cmdsize) {
                     long flips_failed = 0;
                     for (uint32_t s = 0; s < nsects; s++) {
                         scan_section(&sect[s], slide, image_name, is_data_const,
